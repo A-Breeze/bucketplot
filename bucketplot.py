@@ -1,4 +1,6 @@
-"""Functions to interactively cut the data into buckets and plot the results"""
+"""
+Functions to interactively cut the data into buckets and plot the results
+"""
 
 # Useful to have a version number for checking updates
 __version__ = '0.0.3'
@@ -46,7 +48,7 @@ def get_cut_grps(df, cut_by, n_bins):
 
 #####################
 # get_agg_plot_data #
-#####################
+# ####################
 def get_agg_plot_data(
     data_df,
     stat_cols=None, stat_wgt=None,
