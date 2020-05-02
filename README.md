@@ -18,7 +18,7 @@ Cut your data into buckets for effective visualisations.
     - [Build package](#Build-package)
     - [Compile development notebooks](#Compile-development-notebooks)
 1. [Future ideas](#Future-ideas)
-1. [Further notes](#Further-notes)
+1. [Further notes and troubleshooting](#Further-notes-and-troubleshooting)
 
 <p align="right"><a href="#top">Back to top</a></p>
 
@@ -39,7 +39,7 @@ The development requirements consist of the package dependencies, plus IDE, plus
 - **Locally** (on Windows):
     ```
     conda env create -f binder\environment.yml --force
-    conda activate premcon_dev_env
+    conda activate buckplot_dev_env
     ```
 
 <p align="right"><a href="#top">Back to top</a></p>
@@ -91,12 +91,13 @@ jupytext --to notebook --output development/compiled/bucketplot-motor-claims.ipy
 
 <p align="right"><a href="#top">Back to top</a></p>
 
-## Further notes
+## Further notes and troubleshooting
 ### Using Binder for development
 - Advantage: This will run it in the browser, so there is no prerequisite of software installed on your computer (other than a compatible browser). 
 - Disadvantages:
     - Security is *not* guaranteed within Binder (as per [here](https://mybinder.readthedocs.io/en/latest/faq.html#can-i-push-data-from-my-binder-session-back-to-my-repository)), so I'll be pushing Git from another location, which involves some manual copy-paste.
     - The package environment has to be restored each time, which takes some time.
+    - On starting Binder for the first time for this project, the launch process failed *twice* (and the error shown in the log was not immediately obvious), but suceeded on the third attempt without making any changes. I'm not sure how Binder works (e.g. whether it stores previously built images), so this is difficult to debug, but clearly some instability going on.
 
 <p align="right"><a href="#top">Back to top</a></p>
 

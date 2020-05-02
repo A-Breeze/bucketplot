@@ -9,7 +9,7 @@ jupyter:
   kernelspec:
     display_name: Python 3
     language: python
-    name: Python 3
+    name: python3
 ---
 
 # Bucket plot visualisations for motor insurance claim frequency models

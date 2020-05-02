@@ -21,6 +21,7 @@ DESCRIPTION = 'Cut your data into buckets for effective visualisations.'
 URL = 'project URL TBA'
 EMAIL = 'maintainer@email.TBA'
 AUTHOR = 'author name TBA'
+REQUIRES_PYTHON = '>=3.6.0'
 
 # What packages are required for this module to be executed?
 def list_reqs(fname='requirements.txt'):
@@ -50,13 +51,16 @@ setup(
     author_email=EMAIL,
     url=URL,
 
-    # Package contents and dependencies
+    # Package contents
     py_modules=[NAME],  # For a package that consists of just one module
     # packages=setuptools.find_packages(exclude=('tests',)),
-    install_requires=list_reqs(),
-    extras_require={},
     # package_data={NAME: ['VERSION',]},
     include_package_data=True,
+
+    # Package dependencies
+    python_requires=REQUIRES_PYTHON,
+    install_requires=list_reqs(),
+    extras_require={},
 
     # Additional info
     license='MIT',

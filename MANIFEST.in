@@ -1,5 +1,6 @@
 include LICENSE
 include requirements.txt
+include README.md
 
 # Include tests
 recursive-include tests *
