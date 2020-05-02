@@ -23,7 +23,7 @@ This notebook is available in the following locations. These versions are kept i
 # Contents
 1. [Setup](#Setup)
 1. [Modelling data](#Modelling-data): Load data, Subset, Pre-processing, Split for modelling
-1. [Fit models](#Fit-models): Mean model, Simple features model
+1. [Build models](#Build-models): Mean model, Simple features model
 1. [Visualise results](#Visualise-results)
 
 
@@ -65,7 +65,7 @@ from pathlib import Path
 from IPython import __version__ as IPy_version
 import numpy as np
 import pandas as pd
-from bokeh import __version__ as bk_version
+import bokeh
 from sklearn import __version__ as skl_version
 from sklearn.model_selection import train_test_split
 import matplotlib as mpl
@@ -92,8 +92,8 @@ assert np.__version__ == '1.18.2'
 print(f'numpy version:\t\t{np.__version__}')
 assert pd.__version__ == '0.25.3'
 print(f'pandas version:\t\t{pd.__version__}')
-assert bk_version == '2.0.1'
-print(f'bokeh version:\t\t{bk_version}')
+assert bokeh.__version__ == '2.0.1'
+print(f'bokeh version:\t\t{bokeh.__version__}')
 assert skl_version == '0.22.2.post1'
 print(f'sklearn version:\t{skl_version}')
 assert mpl.__version__ == '3.2.1'
@@ -104,9 +104,19 @@ print(f'bucketplot version:\t{bplt.__version__}')
 ```
 
 ```python
+# For development, allow the project modules to be reloaded every time they are used
+%load_ext autoreload
+%aimport bucketplot
+%autoreload 1
+```
+
+```python
+# Set the matplotlib defaults
+plt.style.use('seaborn')
+plt.rcParams['figure.figsize'] = 8, 6
+
 # Load Bokeh for use in a notebook
-from bokeh.io import output_notebook
-output_notebook()
+bokeh.io.output_notebook()
 ```
 
 ```python
@@ -260,8 +270,331 @@ def get_df_extra(df_raw):
 
 ```python
 # Run pre-processing to get a new DataFrame
-df_extra = get_df_extra(df_raw.iloc[:10000,])
+df_extra = get_df_extra(df_raw)
 ```
+
+<div style="text-align: right"><a href="#Contents">Back to Contents</a></div>
+
+# Visualise data
+Suppose we want to view the one-way of how the response `ClaimNb` varies according to some other variable. Let's try a scatter plot for `Exposure`.
+
+```python
+x_var, stat_var = 'Exposure', 'ClaimNb'
+```
+
+```python
+df_extra.plot.scatter(x_var, stat_var)
+plt.show()
+```
+
+This isn't very helpful because:
+- With a large amount of data, a scatter plot doesn't give a good indication of where it is most concentrated. Points overlap.
+- For imbalanced count data, a large proportion of the data rows have a response of zero.
+- The plot must cover the whole range, including any outliers on either axis.
+
+What we want to do is partition the x-axis variable into *buckets*, and plot the *average* respose in each bucket. At the same time, we also want to plot along with the *distribution* of the x-axis variable, to give a sense of the relative credbility of the estimate from each bucket. As follows, this is a task for `pd.cut()` + `groupby` + `agg`. 
+
+Note that we are continuing to parameterise the `x_var` and `stat_var`. It will also be useful to parametrise the weight `stat_wgt` which is attributed to each row for the purpose of finding the *weighted* average of the `stat_var` in each bucket - to start with, the values of `stat_wgt` will just be a constant.
+
+```python
+stat_wgt = None
+```
+
+```python
+def get_agg_plot_data_v1(df_extra, x_var, stat_var, stat_wgt, n_bins=10):
+    # Capture some arguments, so we can pass them to the plotting function
+    plt_args = {
+        'x_var': x_var,
+        'stat_var': stat_var,
+        'stat_wgt': stat_wgt,
+    }
+    plt_data_df = df_extra.assign(
+        # Put each row into a "bucket" by "cutting" the data
+        bucket=lambda df: pd.cut(df[x_var], bins=n_bins),
+        stat_wgt=lambda df: 1 if stat_wgt is None else df[stat_wgt],
+    ).groupby(
+        # Group by the buckets
+        'bucket', sort=False
+    ).agg(
+        # Aggregate calculation for rows in each bucket
+        n_obs=('bucket', 'size'),  # Just for information
+        stat_wgt_sum=('stat_wgt', 'sum'),
+        **{stat_var + '_sum': (stat_var, 'sum')},
+        x_min=(x_var, 'min'), x_max=(x_var, 'max'),
+    ).pipe(
+        # Convert the index to an IntervalIndex
+        lambda df: df.set_index(df.index.categories)
+    ).sort_index().assign(
+        # Get the coordinates of the line points to plot
+        **{stat_var + '_wgt_av': (
+            lambda df, stat_var=stat_var: df[stat_var + '_sum'] / df.stat_wgt_sum
+        )},
+        x_left=lambda df: df.x_min,
+        x_right=lambda df: df.x_max,
+        x_mid=lambda df: (df.x_right + df.x_left)/2.,
+    )
+    return(plt_data_df, plt_args)
+
+plt_data_df, plt_args = get_agg_plot_data_v1(df_extra, x_var, stat_var, stat_wgt)
+plt_data_df
+```
+
+For plotting, we switch away from `matplotlib` to `bokeh` because:
+- It is cumbersome to use `matplotlib` for plotting both a histogram and line plot on the same axes
+- It would be nice to have interactivity (e.g. zooming) in our resulting plots
+
+On the downside, it does require a bit of code to produce the output.
+
+```python
+# TODO: Put this in the package script
+
+def expand_lims(df, pct_buffer_below=0.05, pct_buffer_above=0.05):
+    """
+    Find the range over all columns of df. Then expand these 
+    below and above by a percentage of the total range.
+    Returns: Series with rows 'start' and 'end' of the expanded range
+    """
+    # If a Series is passed, convert it to a DataFrame
+    try:
+        df = df.to_frame()
+    except:
+        pass
+    res_range = df.apply(
+        # Get the range (min and max) over the DataFrame
+        ['min', 'max']).agg({'min': 'min', 'max': 'max'}, axis=1).agg({
+        # Expanded range
+        'start': lambda c: c['max'] - (1 + pct_buffer_below) * (c['max'] - c['min']),
+        'end': lambda c: c['min'] + (1 + pct_buffer_above) * (c['max'] - c['min']),
+    })
+    return(res_range)
+```
+
+```python
+def create_plot_v1(plt_data_df, x_var, stat_var, stat_wgt):
+    # Set up the figure
+    bkp = bokeh.plotting.figure(
+        title="One-way plot", x_axis_label=x_var, y_axis_label="Weight", 
+        tools="reset,box_zoom,pan,wheel_zoom,save", background_fill_color="#fafafa",
+        plot_width=800, plot_height=400
+    )
+
+    # Plot the histogram squares...
+    bkp.quad(
+        top=plt_data_df['stat_wgt_sum'], bottom=0,
+        left=plt_data_df['x_left'], right=plt_data_df['x_right'],
+        fill_color="khaki", line_color="white", legend_label="Weight"
+    )
+    # ...at the bottom of the graph
+    bkp.y_range = bokeh.models.ranges.Range1d(
+        **expand_lims(plt_data_df['stat_wgt_sum'], 0, 1)
+    )
+
+    # Plot the weight average statistic points joined by straight lines
+    # Set up the secondary axis
+    bkp.extra_y_ranges['y_range_2'] = bokeh.models.ranges.Range1d(
+        **expand_lims(plt_data_df[stat_var + '_wgt_av'])
+    )
+    bkp.add_layout(bokeh.models.axes.LinearAxis(
+        y_range_name='y_range_2',
+        axis_label="Weighted average statistic"
+    ), 'right')
+    # The following parameters need to be passed to both circle() and line()
+    stat_line_args = {
+        'x': plt_data_df['x_mid'],
+        'y': plt_data_df[stat_var + '_wgt_av'],
+        'y_range_name': 'y_range_2',
+        'color': 'purple',
+        'legend_label': stat_var,
+    }
+    bkp.circle(**stat_line_args, size=4)
+    bkp.line(**stat_line_args)
+
+    bkp.legend.location = "top_left"
+    bkp.legend.click_policy="hide"
+    
+    return(bkp)
+
+bkp = create_plot_v1(plt_data_df, **plt_args)
+bokeh.plotting.show(bkp)
+```
+
+That's a bit more informative! 
+
+Let's try a different `x_var` - one of the actual explanatory variables this time, e.g. `DrivAge`. And this time we'll weight each observation by `Exposure` (as consistent with the model we hope to build). That means we should pick `Frequency` (not `ClaimNb`) to the `stat_var`, so that the *weighted average statistic* in a given bucket is
+$$
+\frac{\sum_i \textrm{Freq}_i \times \textrm{Exposure}_i}{\sum_i \textrm{Exposure}_i} = 
+\frac{\sum_i \textrm{ClaimNb}_i}{\sum_i \textrm{Exposure}_i} =
+\textrm{Overall frequency of claims in the bucket}
+$$
+where the sum is over all rows $i$ that are allocated to the bucket.
+
+```python
+x_var, stat_var, stat_wgt = 'DrivAge', 'Frequency', 'Exposure'
+```
+
+```python
+plt_data_df, plt_args = get_agg_plot_data_v1(df_extra, x_var, stat_var, stat_wgt, n_bins=20)
+plt_data_df.head()
+```
+
+```python
+bkp = create_plot_v1(plt_data_df, **plt_args)
+# Here is an example of overwriting attributes that were set in the function
+bkp.legend.location = 'top_right'
+bokeh.plotting.show(bkp)
+```
+
+Looking good! 
+
+```python
+# TODO: More buckets => 'all' discrete levels
+```
+
+How about another one: `Density`.
+
+```python
+x_var, stat_var, stat_wgt = 'Density', 'Frequency', 'Exposure'
+plt_data_df, plt_args = get_agg_plot_data_v1(df_extra, x_var, stat_var, stat_wgt, n_bins=20)
+bkp = create_plot_v1(plt_data_df, **plt_args)
+bokeh.plotting.show(bkp)
+```
+
+Uh oh! That graph isn't very helpful - it turns out that `Density` is very skewed, so the weight is concentrated at one end. There are a couple of approaches we could take:
+- Transform `Density` (e.g. taking the `log`) to aim for a more symmetric distribution.
+- Instead of cutting the range into equal width buckets, try cutting into weighted quantiles.
+
+Let's consider how *weighted quantiles* would work:
+1. Order the rows according to `x_var` - we'll parametrise this as `order_by`
+1. Calculate the cumulative weight `cum_wgt` of the weight `bucket_wgt` we want to use. In this case, it'll be equal to `stat_wgt`.
+1. Cut `cum_wgt` into equal width intervals (rather than by `x_var`). Allocate rows to these buckets, and then proceed as before.
+
+```python
+x_var, stat_var, stat_wgt = 'Density', 'Frequency', 'Exposure'
+bucket_wgt = stat_wgt
+cut_by = 'cum_wgt'
+```
+
+```python
+# <<<<<<<<<<<<<<<<<<< NOT COMPLETE >>>>>>>>>>>>>>>>>>>>>>>>
+
+def get_agg_plot_data_v2(
+    df_extra,
+    # What to plot
+    x_var, stat_var, stat_wgt=None,
+    # Variables to define the buckets
+    order_by=None, bucket_wgt=None, cut_by=None, n_bins=10
+):
+    # Set defaults
+    if order_by is None:
+        order_by = x_var
+    if cut_by is None:
+        cut_by = x_var
+    if cut_by == 'cum_wgt':
+        if bucket_wgt is None:
+            bucket_wgt = stat_wgt
+    
+    # Capture some arguments, so we can pass them to the plotting function
+    plt_args = {
+        'x_var': x_var,
+        'stat_var': stat_var,
+        'stat_wgt': stat_wgt,
+        'order_by': order_by,
+        'bucket_wgt': bucket_wgt,
+    }
+    if cut_by == 'cum_wgt':
+        if 
+        df_extra.assign(
+            bucket_wgt=lambda df: df[bucket_wgt],
+            # Also create a row number column to ensure the ordering is unique
+            row_num_ID=lambda df: np.arange(len(df))
+        ).sort_values([order_by, 'row_num_ID']).assign(
+            cum_wgt=lambda df: df.bucket_wgt.cumsum(),
+            # Put each row into a "bucket" by "cutting" the data
+            bucket=lambda df: pd.cut(df[cut_by], bins=n_bins),
+            stat_wgt=lambda df: 1 if stat_wgt is None else df[stat_wgt],
+        )
+    
+    plt_data_df = df_extra.assign(
+        bucket_wgt=lambda df: 1 if bucket_wgt is None else df[bucket_wgt],
+        # Also create a row number column to ensure the ordering is unique
+        row_num_ID=lambda df: np.arange(len(df))
+    ).sort_values([order_by, 'row_num_ID']).assign(
+        cum_wgt=lambda df: df.bucket_wgt.cumsum(),
+        # Put each row into a "bucket" by "cutting" the data
+        bucket=lambda df: pd.cut(df[cut_by], bins=n_bins),
+        stat_wgt=lambda df: 1 if stat_wgt is None else df[stat_wgt],
+    ).groupby(
+        # Group by the buckets
+        'bucket', sort=False
+    ).agg(
+        # Aggregate calculation for rows in each bucket
+        n_obs=('bucket', 'size'),  # Just for information
+        stat_wgt_sum=('stat_wgt', 'sum'),
+        **{stat_var + '_sum': (stat_var, 'sum')},
+        x_min=(x_var, 'min'), x_max=(x_var, 'max'),
+    ).pipe(
+        # Convert the index to an IntervalIndex
+        lambda df: df.set_index(df.index.categories)
+    ).sort_index().assign(
+        # Get the coordinates of the line points to plot
+        **{stat_var + '_wgt_av': (
+            lambda df, stat_var=stat_var: df[stat_var + '_sum'] / df.stat_wgt_sum
+        )},
+        x_left=lambda df: df.x_min,
+        x_right=lambda df: df.x_max,
+        x_mid=lambda df: (df.x_right + df.x_left)/2.,
+    )
+    return(plt_data_df, plt_args)
+
+plt_data_df, plt_args = get_agg_plot_data_v1(df_extra, x_var, stat_var, stat_wgt)
+plt_data_df
+```
+
+```python
+
+```
+
+```python
+
+```
+
+```python
+
+```
+
+```python
+df_raw.head()
+```
+
+```python
+bplt.get_agg_plot_data(df_raw, order_by='Exposure', n_bins=10)
+```
+
+```python
+get_agg_plot_data(
+    df_raw,
+    stat_cols=None, stat_wgt=None,
+    cut_by=None, n_bins=None, order_by=None, bucket_wgt=None,
+    x_axis_var=None,
+    set_config=None,
+)
+```
+
+```python
+
+```
+
+```python
+
+```
+
+```python
+
+```
+
+<div style="text-align: right"><a href="#Contents">Back to Contents</a></div>
+
+# Build models
 
 ```python
 expl_var_names = [
@@ -298,11 +631,6 @@ def score_data(data_df, GLMRes_obj):
     )
     return(scored_df)
 ```
-
-<div style="text-align: right"><a href="#Contents">Back to Contents</a></div>
-
-# Fit models
-
 
 ## Mean model
 Just for checking that the code is working for the simplest case.
