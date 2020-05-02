@@ -1,0 +1,20 @@
+#!/bin/bash
+
+# This file specifies commands to run when the Binder container starts
+# --------------------------------------------------------------------
+
+# Stop everything if one command fails
+set -e
+
+# Allow conda to be used in bash by configuring the .bashrc
+conda init bash
+
+# Install specific versions of JupyterLab extensions
+# jupytext: The JupyterLab extension ships with the jupytext package
+# But we are using an older version of JupyterLab, so need to downgrade
+# The jupytext JupyterLab extension as follows.
+# See: https://jupytext.readthedocs.io/en/latest/install.html#jupytext-commands-in-jupyterlab
+jupyter labextension install jupyterlab-jupytext@1.1.1
+
+# Build jupyter lab to include extensions
+jupyter lab build
