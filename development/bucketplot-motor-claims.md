@@ -83,6 +83,11 @@ if not on_kaggle:
         sys.path.insert(0, str(root_dir_path))
 import bucketplot as bplt
 
+# For development, allow the project modules to be reloaded every time they are used
+%load_ext autoreload
+%aimport bucketplot
+%autoreload 1
+
 # Check they have loaded and the versions are as expected
 assert platform.python_version_tuple() == ('3', '6', '6')
 print(f"Python version:\t\t{sys.version}")
@@ -101,13 +106,6 @@ print(f'matplotlib version:\t{mpl.__version__}')
 assert sm_version == '0.11.0'
 print(f'statsmodels version:\t{sm_version}')
 print(f'bucketplot version:\t{bplt.__version__}')
-```
-
-```python
-# For development, allow the project modules to be reloaded every time they are used
-%load_ext autoreload
-%aimport bucketplot
-%autoreload 1
 ```
 
 ```python
@@ -133,6 +131,10 @@ if on_kaggle:
     claims_data_filepath = Path('/kaggle/input/french-motor-claims-datasets-fremtpl2freq/freMTPL2freq.csv')
 else:
     claims_data_filepath = Path('freMTPL2freq.csv')
+if claims_data_filepath.is_file():
+    print("Correct: CSV file is available for loading")
+else:
+    print("Warning: CSV file not yet available in that location")
 ```
 
 <div style="text-align: right"><a href="#Contents">Back to Contents</a></div>
@@ -169,11 +171,13 @@ if not claims_data_filepath.is_file():
     print("Saving data...")
     df_raw.to_csv(claims_data_filepath, index=False)
     print("Save complete")
-
-df_raw = pd.read_csv(
-    claims_data_filepath, delimiter=',', dtype=expected_dtypes
-    # Get index sorted with ascending IDpol, just in case it is out or order
-).sort_values('IDpol').reset_index(drop=True)
+else:
+    print("Loading data from CSV...")
+    df_raw = pd.read_csv(
+        claims_data_filepath, delimiter=',', dtype=expected_dtypes,
+        # Get index sorted with ascending IDpol, just in case it is out or order
+    ).sort_values('IDpol').reset_index(drop=True)
+    print("Load complete")
 ```
 
 ```python
@@ -207,7 +211,7 @@ mean_approx = pd.Series({
 nrows_sample = int(1e4)
 if not on_kaggle:
     df_raw, df_unused = train_test_split(
-        df_raw, train_size=nrows_sample, random_state=3, shuffle=True
+        df_raw, train_size=nrows_sample, random_state=35, shuffle=True
     )
 ```
 
@@ -270,7 +274,7 @@ def get_df_extra(df_raw):
 
 ```python
 # Run pre-processing to get a new DataFrame
-df_extra = get_df_extra(df_raw)
+df = get_df_extra(df_raw)
 ```
 
 <div style="text-align: right"><a href="#Contents">Back to Contents</a></div>
@@ -283,7 +287,7 @@ x_var, stat_var = 'Exposure', 'ClaimNb'
 ```
 
 ```python
-df_extra.plot.scatter(x_var, stat_var)
+df.plot.scatter(x_var, stat_var)
 plt.show()
 ```
 
@@ -294,49 +298,134 @@ This isn't very helpful because:
 
 What we want to do is partition the x-axis variable into *buckets*, and plot the *average* respose in each bucket. At the same time, we also want to plot along with the *distribution* of the x-axis variable, to give a sense of the relative credbility of the estimate from each bucket. As follows, this is a task for `pd.cut()` + `groupby` + `agg`. 
 
-Note that we are continuing to parameterise the `x_var` and `stat_var`. It will also be useful to parametrise the weight `stat_wgt` which is attributed to each row for the purpose of finding the *weighted* average of the `stat_var` in each bucket - to start with, the values of `stat_wgt` will just be a constant.
+Note that we are continuing to parameterise the `x_var` and `stat_var`. It will also be useful to parametrise the weight `stat_wgt` which is attributed to each row for the purpose of finding the *weighted* average of the `stat_var` in each bucket - to start with, the values of `stat_wgt` will just be a constant. We'll keep track of these parameters, so they can be passed between functions.
 
 ```python
 stat_wgt = None
 ```
 
 ```python
-def get_agg_plot_data_v1(df_extra, x_var, stat_var, stat_wgt, n_bins=10):
-    # Capture some arguments, so we can pass them to the plotting function
-    plt_args = {
-        'x_var': x_var,
-        'stat_var': stat_var,
+# TODO: Move to util functions
+
+BARGS_DEFAULT = {
+    'stat_wgt': 'const',
+    'n_bins': 10,
+}
+
+def update_bargs(bargs_new, bargs_prev, func_name, bargs_default=BARGS_DEFAULT):
+    """Merge two dictionaries, favouring values from dict_override if the keys overlap"""
+    # Convert input data types
+    if bargs_prev is None:
+        bargs_prev = dict()
+    # Allocate a non-None value for every key in bargs_new or bargs_prev
+    res = dict()
+    for key in {**bargs_new, **bargs_prev}.keys():
+        if key in bargs_new.keys() and bargs_new[key] is not None:
+            res[key] = bargs_new[key]
+        elif key in bargs_prev.keys():
+            res[key] = bargs_prev[key]
+        elif key in bargs_default.keys():
+            res[key] = bargs_default[key]
+        else: 
+            raise ValueError(
+                f"{func_name}: '{key}' is required but has not been supplied"
+            )
+    return(res)
+```
+
+```python
+def add_df_cols(df, stat_wgt=None, bargs=None):
+    """Append additional columns to df needed for aggregation"""
+    bargs = update_bargs({
         'stat_wgt': stat_wgt,
-    }
-    plt_data_df = df_extra.assign(
+    }, bargs, 'add_df_cols')
+    
+    df_w_cols = df.assign(
+        stat_wgt=lambda df: (
+            1 if bargs['stat_wgt'] == 'const' 
+            else df[bargs['stat_wgt']]
+        ),
+    )
+    return(df_w_cols, bargs)
+
+df_w_cols, bargs = add_df_cols(df)
+print(f"'bargs' so far: {bargs}")
+df_w_cols.head()
+```
+
+```python
+def assign_buckets(df_w_cols, cut_var=None, n_bins=10, bargs=None):
+    """Cut df into buckets and assign each row to a bucket"""
+    bargs = update_bargs({
+        'cut_var': cut_var,
+        'n_bins': n_bins,
+    }, bargs, 'assign_buckets')
+    
+    df_w_buckets = df_w_cols.assign(
         # Put each row into a "bucket" by "cutting" the data
-        bucket=lambda df: pd.cut(df[x_var], bins=n_bins),
-        stat_wgt=lambda df: 1 if stat_wgt is None else df[stat_wgt],
-    ).groupby(
+        bucket=lambda df: pd.cut(
+            df[bargs['cut_var']],
+            bins=bargs['n_bins']
+        ),
+    )
+    return(df_w_buckets, bargs)
+
+df_w_buckets, bargs = assign_buckets(df_w_cols, cut_var=x_var, bargs=bargs)
+print(f"'bargs' so far: {bargs}")
+df_w_buckets.head()
+```
+
+```python
+def group_and_agg(df_w_buckets, x_var, stat_vars, bargs=None):
+    """Group by bucket and calculate aggregate values in each bucket"""
+    if not isinstance(stat_vars, list):
+        stat_vars = [stat_vars]
+    bargs = update_bargs({
+        'x_var': x_var,
+        'stat_vars': stat_vars,
+    }, bargs, 'group_and_agg')
+    
+    df_agg = df_w_buckets.groupby(
         # Group by the buckets
         'bucket', sort=False
     ).agg(
         # Aggregate calculation for rows in each bucket
         n_obs=('bucket', 'size'),  # Just for information
         stat_wgt_sum=('stat_wgt', 'sum'),
-        **{stat_var + '_sum': (stat_var, 'sum')},
-        x_min=(x_var, 'min'), x_max=(x_var, 'max'),
+        **{stat_var + '_sum': (stat_var, 'sum') for stat_var in bargs['stat_vars']},
+        x_min=(bargs['x_var'], 'min'),
+        x_max=(bargs['x_var'], 'max'),
     ).pipe(
         # Convert the index to an IntervalIndex
         lambda df: df.set_index(df.index.categories)
-    ).sort_index().assign(
+    ).sort_index()
+    return(df_agg, bargs)
+
+df_agg, bargs = group_and_agg(df_w_buckets, x_var, stat_vars=stat_var, bargs=bargs)
+print(f"'bargs' so far: {bargs}")
+df_agg.head()
+```
+
+```python
+def add_agg_cols(df_agg, bargs=None):
+    """Append additional columns to aggregated df needed for plotting"""
+    bargs = update_bargs({
+    }, bargs, 'add_agg_cols')
+    
+    df_for_plot = df_agg.assign(
         # Get the coordinates of the line points to plot
         **{stat_var + '_wgt_av': (
-            lambda df, stat_var=stat_var: df[stat_var + '_sum'] / df.stat_wgt_sum
-        )},
-        x_left=lambda df: df.x_min,
-        x_right=lambda df: df.x_max,
-        x_mid=lambda df: (df.x_right + df.x_left)/2.,
+            lambda df, stat_var=stat_var: df[stat_var + '_sum'] / df['stat_wgt_sum']
+        ) for stat_var in bargs['stat_vars']},
+        x_left=lambda df: df['x_min'],
+        x_right=lambda df: df['x_max'],
+        x_mid=lambda df: (df['x_right'] + df['x_left'])/2.,
     )
-    return(plt_data_df, plt_args)
+    return(df_for_plot, bargs)
 
-plt_data_df, plt_args = get_agg_plot_data_v1(df_extra, x_var, stat_var, stat_wgt)
-plt_data_df
+df_for_plot, bargs = add_agg_cols(df_agg, bargs=bargs)
+print(f"'bargs' so far: {bargs}")
+df_for_plot.head()
 ```
 
 For plotting, we switch away from `matplotlib` to `bokeh` because:
@@ -346,7 +435,7 @@ For plotting, we switch away from `matplotlib` to `bokeh` because:
 On the downside, it does require a bit of code to produce the output.
 
 ```python
-# TODO: Put this in the package script
+# TODO: Move to util functions
 
 def expand_lims(df, pct_buffer_below=0.05, pct_buffer_above=0.05):
     """
@@ -370,7 +459,9 @@ def expand_lims(df, pct_buffer_below=0.05, pct_buffer_above=0.05):
 ```
 
 ```python
-def create_plot_v1(plt_data_df, x_var, stat_var, stat_wgt):
+# TODO: Refactor with bargs
+
+def create_plot(plt_data_df, x_var, stat_var, stat_wgt):
     # Set up the figure
     bkp = bokeh.plotting.figure(
         title="One-way plot", x_axis_label=x_var, y_axis_label="Weight", 
