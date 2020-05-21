@@ -17,6 +17,7 @@ Cut your data into buckets for effective visualisations.
     - [Run automated tests](#Run-automated-tests)
     - [Build package](#Build-package)
     - [Compile development notebooks](#Compile-development-notebooks)
+    - [Run linting](#Run-linting)
 1. [Future ideas](#Future-ideas)
 1. [Further notes and troubleshooting](#Further-notes-and-troubleshooting)
 
@@ -40,6 +41,7 @@ The development requirements consist of the package dependencies, plus IDE, plus
     ```
     conda env create -f binder\environment.yml --force
     conda activate buckplot_dev_env
+    jupyter lab
     ```
 
 <p align="right"><a href="#top">Back to top</a></p>
@@ -61,10 +63,19 @@ pip install -e .
 ```
 
 ### Run automated tests
-Ensure the package is installed.
 ```
-pytest
+pytest tests/
 ```
+Note:
+- Ensure the package is installed before running the above, if you want to test the built version.
+- To see what tests pytest will discover, without actually running the tests (useful for debugging):
+    ```
+    pytest --collect-only tests/
+    ```
+- By default, `print()` statements in the test (i.e. to `stdout`) will only be shown for *failed* tests. To show them for *all* tests (including successes) on the order of tests that are run:
+    ```
+    pytest --capture=no tests/
+    ```
 
 ### Build package
 The following will create a *source* distribution and a *wheel* distribution out of the Python package (given it includes a `setup.py`), and puts the resulting files in `build/` (for some intermediate files from the wheel build) and `dist/` (for the final source and wheel distributions) subfolders.
@@ -77,16 +88,21 @@ python setup.py sdist bdist_wheel
 python -m venv venv
 source venv/bin/activate
 pip install --upgrade pip
-pip install ./dist/bucketplot-*.whl  # For the wheel (including dependencies)
-# For the source, we first need to install dependencies
-pip install -r requirements.txt
-pip install ./dist/bucketplot-*.tar.gz
+pip install ./dist/bucketplot-*.tar.gz  # For source distribution
+pip install ./dist/bucketplot-*.whl  # For the wheel
 ```
 
 ### Compile development notebooks
 The development notebooks have been saved in `jupytext` markdown format, so they can be executed (to produce the outputs) and compiled (to `ipynb` format) as follows:
 ```
 jupytext --to notebook --output development/compiled/bucketplot-motor-claims.ipynb --execute development/bucketplot-motor-claims.md
+```
+
+### Run linting
+To check code formatting using `pylint`.
+```
+pylint bucketplot.py
+pylint tests/
 ```
 
 <p align="right"><a href="#top">Back to top</a></p>

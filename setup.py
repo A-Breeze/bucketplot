@@ -13,18 +13,18 @@ import io
 import os
 from setuptools import setup
 
-import bucketplot
-
 # Package meta-data
 NAME = 'bucketplot'
+VERSION = '0.1.0'  # Ensure this is kept in-sync with __version__ in the code module
 DESCRIPTION = 'Cut your data into buckets for effective visualisations.'
-URL = 'project URL TBA'
+URL = 'https://github.com/A-Breeze/bucketplot'
 EMAIL = 'maintainer@email.TBA'
-AUTHOR = 'author name TBA'
+AUTHOR = 'A-Breeze'
 REQUIRES_PYTHON = '>=3.6.0'
 
 # What packages are required for this module to be executed?
 def list_reqs(fname='requirements.txt'):
+    """Get string data from a file"""
     with open(fname) as fd:
         return fd.read().splitlines()
 
@@ -43,7 +43,7 @@ except FileNotFoundError:
 setup(
     # Package metadata
     name=NAME,
-    version=bucketplot.__version__,
+    version=VERSION,
     description=DESCRIPTION,
     long_description=long_description,
     long_description_content_type='text/markdown',
