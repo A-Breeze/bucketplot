@@ -1,0 +1,20 @@
+{
+    // Activate the project's conda env.
+    // Cannot find a way to parametrise this, so you may need to manually amend
+    // this if your conda `envs` folder is in a different location.
+    "python.pythonPath": "C:\\Program Files\\Anaconda3-2018.12\\envs\\buckplot_dev_env\\python.exe",
+
+    // Disable automatic linting in VSCode
+    "python.linting.enabled": false,
+    "python.linting.pylintEnabled": false,
+
+    // Enable testing with pytest
+    "python.testing.pytestEnabled": true,
+    "python.testing.unittestEnabled": false,
+    "python.testing.nosetestsEnabled": false,
+    "python.testing.pytestArgs": [
+        "tests",
+        // "--capture=no",  // For debugging: Show stdout for all tests (not just failures)
+    ],
+    "python.testing.autoTestDiscoverOnSaveEnabled": false
+}

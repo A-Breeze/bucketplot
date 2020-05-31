@@ -1,0 +1,11 @@
+# Packaging
+setuptools==46.1.3
+wheel==0.34.2
+
+# Code functionality
+numpy==1.18.2
+pandas==0.25.3
+bokeh==2.0.1
+
+# Automated testing
+pytest==5.0.1

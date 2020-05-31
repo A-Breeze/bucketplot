@@ -1,0 +1,19 @@
+name: buckplot_dev_env
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  # Python version
+  - python==3.6.6
+  - pip==20.0.2
+  # Development environment
+  - jupyter==1.0.0
+  - notebook==5.5.0
+  - ipython==7.13.0
+  - jupyterlab==1.2.6
+  - jupytext==1.4.2
+  # Package dependencies
+  # and extra packages during development
+  - pip: 
+    - -r ../requirements.txt
+    - -r ../development/requirements_dev.txt

@@ -1,0 +1,3 @@
+# Ignore artifacts generated from the development code
+*.csv
+*_snapshot.txt
