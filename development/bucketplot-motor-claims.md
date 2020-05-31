@@ -898,7 +898,7 @@ Grouping and aggregating almost certainly results in a much smaller DataFrame, s
 def agg_wgt_av(
     df_w_buckets, stat_wgt=None,
     x_var=None, stat_vars=None,
-    bucket_col=None, split_col_val=None,
+    bucket_col=None, split_cols=None,
 ):
     """
     Group by bucket and calculate aggregate values in each bucket
@@ -916,95 +916,7 @@ def agg_wgt_av(
         If None (default) or empty list, no values are calculated.
     bucket_col: Name of bucket column to group by.
         Must be in df_w_buckets. Default 'bucket'.
-    split_col_val:
-        None (default): Do not split buckets.
-        str: Name of column to split buckets by.
-        tuple: Name of column, and constant value to assign (default '__all__').
-    
-    Returns: DataFrame with one row per group and aggregate statistics.
-    """
-    # Set defaults
-    if x_var is None:
-        x_var_lst = []
-    else:
-        x_var_lst = [x_var]
-    if stat_wgt is None:
-        stat_wgt = 'const'
-        df_w_buckets = df_w_buckets.assign(**{stat_wgt: 1})
-    if stat_vars is None:
-        stat_vars = []
-    if bucket_col is None:
-        bucket_col = 'bucket'
-    if split_col_val is None:
-        split_col_lst = []
-    
-    # Format inputs
-    if not isinstance(stat_vars, list):
-        stat_vars = [stat_vars]
-    if isinstance(split_col_val, str):
-        split_col_lst = [split_col_val]
-    if isinstance(split_col_val, tuple):
-        if len(split_col_val) == 1:
-            split_col_val = split_col_val[0], '__all__'
-        df_w_buckets = df_w_buckets.assign(**{split_col_val[0]: split_col_val[1]})
-        split_col_lst = [split_col_val[0]]
-    
-    # Variables for which we want the (weighted) distribution in each bucket
-    agg_vars_all = stat_vars
-    if x_var is not None and np.issubdtype(df_w_buckets[x_var].dtype, np.number):
-        agg_vars_all = [x_var] + agg_vars_all
-    # Ensure they are unique (and maintain order)
-    agg_vars = pd.Series(agg_vars_all).drop_duplicates()
-    
-    df_agg = df_w_buckets.assign(
-        **{col + '_x_wgt': (
-            lambda df, col=col: df[col] * df[stat_wgt]
-        ) for col in agg_vars},
-    ).groupby(
-        # Group by the buckets
-        [bucket_col] + split_col_lst, sort=False
-    ).agg(
-        # Aggregate calculation for rows in each bucket
-        n_obs=(bucket_col, 'size'),  # It is possible that a bucket contains zero rows
-        **{col: (col, 'sum') for col in [stat_wgt]},
-        **{stat_var + '_wgt_sum': (
-            stat_var + '_x_wgt', 'sum'
-        ) for stat_var in agg_vars},
-        **{"x_" + func: (x_var, func) 
-           for func in ['min', 'max'] for x_var in x_var_lst}
-    ).sort_index().assign(
-        # Calculate the weighted average of the stats
-        **{stat_var + '_wgt_av': (
-            lambda df, stat_var=stat_var: df[stat_var + '_wgt_sum'] / df[stat_wgt]
-        ) for stat_var in agg_vars},
-    )
-    
-    return(df_agg)
-```
-
-```python
-def agg_wgt_av(
-    df_w_buckets, stat_wgt=None,
-    x_var=None, stat_vars=None,
-    bucket_col=None, split_col=None,
-):
-    """
-    Group by bucket and calculate aggregate values in each bucket
-    
-    df_w_buckets: Result of an 'assign_buckets' function.
-        i.e. a DataFrame with a `bucket` column the is Categorical
-        with Interval categories that partition a range.
-        Rows with missing `bucket` value are excluded from the grouping.
-    stat_wgt: Weights for the weighted distributions of stat_vars.
-        If None (default) then it is set to 'const' and equal weights are used
-        for all rows. Must be non-negative with at least one postive value.
-    x_var: Column name of variable that will be plotted on the x axis.
-        If None, no x axis variables are calculated.
-    stat_vars: 
-        If None (default) or empty list, no values are calculated.
-    bucket_col: Name of bucket column to group by.
-        Must be in df_w_buckets. Default 'bucket'.
-    split_col:
+    split_cols:
         None (default): Do not split buckets.
         str: Name of column to split buckets by.
     
@@ -1016,16 +928,17 @@ def agg_wgt_av(
     else:
         x_var_lst = [x_var]
     if stat_wgt is None:
-        stat_wgt = 'const'
+        stat_wgt = '__const__'
         df_w_buckets = df_w_buckets.assign(**{stat_wgt: 1})
     if stat_vars is None:
         stat_vars = []
     if bucket_col is None:
         bucket_col = 'bucket'
-    if split_col is None:
-        split_col_lst = []
-    else:
-        split_col_lst = [split_col]
+    split_cols_lst = split_cols
+    if split_cols is None:
+        split_cols_lst = []
+    if isinstance(split_cols, str):
+        split_cols_lst = [split_cols]
     
     # Format inputs
     if not isinstance(stat_vars, list):
@@ -1038,29 +951,18 @@ def agg_wgt_av(
     # Ensure they are unique (and maintain order)
     agg_vars = pd.Series(agg_vars_all).drop_duplicates()
     
-    df_agg = df_w_buckets.assign(
-        **{col + '_x_wgt': (
-            lambda df, col=col: df[col] * df[stat_wgt]
-        ) for col in agg_vars},
-    ).groupby(
+    df_agg = df_w_buckets.groupby(
         # Group by the buckets
-        [bucket_col] + split_col_lst, sort=False
-    ).agg(
+        [bucket_col] + split_cols_lst, sort=False
+    ).apply(lambda df: pd.Series({
         # Aggregate calculation for rows in each bucket
-        n_obs=(bucket_col, 'size'),  # It is possible that a bucket contains zero rows
-        **{col: (col, 'sum') for col in [stat_wgt]},
-        **{stat_var + '_wgt_sum': (
-            stat_var + '_x_wgt', 'sum'
-        ) for stat_var in agg_vars},
-        **{"x_" + func: (x_var, func) 
-           for func in ['min', 'max'] for x_var in x_var_lst}
-    ).sort_index().assign(
-        # Calculate the weighted average of the stats
-        **{stat_var + '_wgt_av': (
-            lambda df, stat_var=stat_var: df[stat_var + '_wgt_sum'] / df[stat_wgt]
-        ) for stat_var in agg_vars},
-    )
-    
+       'n_obs': df.iloc[:, 0].size,  # It is possible that a bucket contains zero rows
+        stat_wgt: df[stat_wgt].sum(),
+        **{stat_var + '_wgt_av': np.average(df[stat_var], weights=df[stat_wgt]) 
+           for stat_var in agg_vars},
+        **{"x_" + func[0]: func[1](df[x_var]) 
+           for func in [('min', np.amin), ('max', np.amax)] for x_var in x_var_lst},
+    })).sort_index()
     return(df_agg)
 ```
 
@@ -1070,12 +972,204 @@ bucket_var, bucket_wgt = 'Freq_pred_simple', 'Exposure'
 x_var, stat_wgt, stat_vars = 'cum_' + bucket_wgt, bucket_wgt, ['Frequency', 'Freq_pred_simple']
 tmp7_w_buckets = df.pipe(weighted_quantiles, bucket_var, 4, bucket_wgt)
 tmp7_agg_all = tmp7_w_buckets.pipe(agg_wgt_av, stat_wgt, x_var, stat_vars)
+assert isinstance(tmp7_agg_all.index, pd.IntervalIndex)
 tmp7_agg_all
 ```
 
 ```python
-tmp7_agg_split = agg_wgt_av(tmp7_w_buckets, stat_wgt, x_var, stat_vars, split_col='split')
-tmp7_agg_split
+tmp7_agg_split0 = agg_wgt_av(tmp7_w_buckets, stat_wgt, x_var, stat_vars, split_cols='split')
+tmp7_agg_split0
+```
+
+```python
+def combined_hierarchical_index(df1, df2, index_val='__all__'):
+    """
+    Combine two DataFrames where one of them has a MultiIndex with more levels than the other
+    """
+    if len(df1.index.names) > len(df2.index.names):
+        df_split = df1
+        df_all = df2
+    else:
+        df_split = df2
+        df_all = df1
+    extra_level_names = list(set(df_split.index.names) - set(df_all.index.names))
+    if len(extra_level_names) == 0:
+        raise ValueError(
+            "\n\tagg_combine: The indices of `df1` and `df2` must be the same"
+            "\n\tbut with one of them having at least one fewer level."
+        )
+    idx_names_original = df_split.index.names
+    idx_names_ordered = df_all.index.names + extra_level_names
+    df_combined = pd.concat([
+        df_split.reorder_levels(idx_names_ordered),
+        df_all.reset_index().assign(**{
+            extra_level_name: index_val for extra_level_name in extra_level_names
+        }).set_index(idx_names_ordered),
+    ], axis=0, sort=False).reorder_levels(idx_names_original).sort_index()
+    return df_combined
+```
+
+```python
+def select_hierarchical_levels(df_combined, levels=None, index_val='__all__'):
+    """
+    Uncombine a DataFrame into one that only contains `levels`
+    """
+    # Parse arguments
+    if levels is None or levels == []:
+        levels = [0]
+    if isinstance(levels, int) or isinstance(levels, str):
+        levels = [levels]
+    # Get index names, along with which have been selected
+    idx_levels_all = pd.Series(
+        df_combined.index.names, name='level_name'
+    ).to_frame().assign(
+        selected=lambda df: df.index.isin(levels) | df['level_name'].isin(levels)
+    )
+    # Warning if some levels provided cannot be matched
+    unmatched_levels = [level for level in levels if not(
+        (level in idx_levels_all.index) or (level in idx_levels_all['level_name'].values)
+    )]
+    if len(unmatched_levels) > 0:
+        warnings.warn(
+            "The following levels could not be found in the index "
+            f"names of `df_combined`: {unmatched_levels}"
+        )
+    idx_levels = idx_levels_all[1:]
+    # Include or drop the relevant levels
+    res = df_combined
+    for _, level_row in idx_levels.iterrows():
+        if level_row['selected']:
+            res = res.loc[
+                res.index.get_level_values(level_row['level_name']) != index_val
+            ]
+        else:
+            res = res.xs(index_val, level=level_row['level_name'])
+    if len(res.index.names) > 1:
+        res.index = res.index.remove_unused_levels()
+    return res.sort_index()
+```
+
+```python
+import itertools
+def powerset(iterable):
+    """powerset([1,2,3]) --> [] [1,] [2,] [3,] [1,2] [1,3] [2,3] [1,2,3]"""
+    s = list(iterable)
+    return [list(comb) for comb in itertools.chain.from_iterable(
+        itertools.combinations(s, r) for r in range(len(s)+1)
+    )]
+```
+
+```python
+def agg_combined(
+    df_w_buckets, agg_function, *agg_args, split_cols=None, **agg_kwargs,
+):
+    # Format inputs
+    split_cols_lst = split_cols
+    if split_cols is None:
+        split_cols_lst = []
+    if isinstance(split_cols, str):
+        split_cols_lst = [split_cols]
+    
+    for set_num, split_set in enumerate(powerset(split_cols_lst)[::-1]):
+        df_agg = agg_wgt_av(df_w_buckets, split_cols=split_set, *agg_args, **agg_kwargs)
+        if set_num == 0:  # First loop is for all split columns. Instantiate the resulting df
+            df_combined = df_agg
+        else:
+            df_combined = combined_hierarchical_index(df_combined, df_agg)
+    return df_combined
+```
+
+```python
+def assign_hierarchical(df, **col_funcs):
+    split_cols_lst = df.index.names[1:]
+    for set_num, split_set in enumerate(powerset(split_cols_lst)[::-1]):
+        df_selected = select_hierarchical_levels(df, split_set).assign(**col_funcs)
+        if set_num == 0:  # First loop is for all split columns. Instantiate the resulting df
+            df_combined = df_selected
+        else:
+            df_combined = combined_hierarchical_index(df_combined, df_selected)
+    return df_combined
+```
+
+```python
+# Examples with various split columns
+bucket_var, bucket_wgt = 'Freq_pred_simple', 'Exposure'
+x_var, stat_wgt, stat_vars = 'cum_' + bucket_wgt, bucket_wgt, ['Frequency', 'Freq_pred_simple']
+tmp71_w_buckets = df.pipe(weighted_quantiles, bucket_var, 4, bucket_wgt)
+
+# Default args: No split or stat_vars
+tmp71_combined_none = tmp71_w_buckets.pipe(agg_combined, agg_wgt_av)
+tmp71_combined_none
+```
+
+```python
+# Recreate df with no split
+tmp71_combined_all = tmp71_w_buckets.pipe(agg_combined, agg_wgt_av, stat_wgt, x_var, stat_vars)
+display(tmp71_combined_all.iloc[:5, :5])
+assert tmp71_combined_all.equals(tmp7_agg_all)
+print("Correct: Matches previous example as expected")
+```
+
+```python
+# Recreate df with one split
+tmp71_combined_1 = tmp71_w_buckets.pipe(
+    agg_combined, agg_wgt_av, stat_wgt, x_var, stat_vars,
+    split_cols='split'
+)
+display(tmp71_combined_1.iloc[:5, :5])
+assert select_hierarchical_levels(tmp71_combined_1).equals(tmp7_agg_all)
+assert select_hierarchical_levels(tmp71_combined_1, 1).equals(tmp7_agg_split0)
+assert select_hierarchical_levels(tmp71_combined_1, 1).index.levels[1].equals(
+    tmp7_agg_split0.index.levels[1]
+)
+print("Correct: Matches previous examples as expected")
+```
+
+```python
+# Example of assign_hierarchical
+col_funcs = {
+    'quad_upr': lambda df: df.groupby(df.index.names[:1] + df.index.names[1:-1])[stat_wgt].transform('cumsum'),
+    'quad_lwr': lambda df: df.groupby(df.index.names[:1] + df.index.names[1:-1])['quad_upr'].shift(fill_value=0),
+}
+assign_hierarchical(tmp71_combined_1, **col_funcs).iloc[:5]
+# tmp71_combined_1.pipe(assign_hierarchical, **col_funcs).iloc[:5]  # Also using pipe
+```
+
+```python
+# Create df with multiple splits
+tmp71_combined_2 = tmp71_w_buckets.pipe(
+    agg_combined, agg_wgt_av, stat_wgt, x_var, stat_vars,
+    split_cols=['split', 'Area']
+)
+display(tmp71_combined_2.iloc[:5, :5])
+assert select_hierarchical_levels(tmp71_combined_2, None).equals(tmp7_agg_all)
+assert select_hierarchical_levels(tmp71_combined_2, 1).equals(tmp7_agg_split0)
+assert select_hierarchical_levels(tmp71_combined_2, ['split', 'Area']).equals(
+    tmp71_w_buckets.pipe(
+        agg_wgt_av, stat_wgt, x_var, stat_vars,
+        split_cols=['split', 'Area']
+    )
+)
+print("Correct: Matches previous examples as expected")
+```
+
+```python
+warn_obj = None
+with warnings.catch_warnings(record=True) as _warn_obj:
+    warnings.simplefilter("always")
+    _ = select_hierarchical_levels(tmp71_combined_2, [0, 'foo'])
+    warn_obj = _warn_obj
+# Verify some things
+assert len(warn_obj) == 1
+assert issubclass(warn_obj[-1].category, UserWarning)
+assert 'The following levels could not be found' in str(warn_obj[-1].message)
+print("Correct: Warning message shown in appropriate situation")
+```
+
+```python
+# Further examples
+display(select_hierarchical_levels(tmp71_combined_2, 'Area').iloc[:7, :5])
+display(select_hierarchical_levels(tmp71_combined_2, ['split', 'Area']).iloc[:7, :5])
 ```
 
 ```python
@@ -1089,7 +1183,7 @@ unit_filled, b_map = pd.Series([0, 1, np.nan]).to_frame('val').assign(
 display(unit_filled)
 unit_agg_all = unit_filled.pipe(agg_wgt_av, x_var='val')
 display(unit_agg_all)
-unit_agg_split = unit_filled.pipe(agg_wgt_av, stat_vars='val', split_col='val_miss_ind')
+unit_agg_split = unit_filled.pipe(agg_wgt_av, stat_vars='val', split_cols='val_miss_ind')
 display(unit_agg_split)
 ```
 
@@ -1162,8 +1256,8 @@ tmp8_agg = df.pipe(
 )
 tmp8_agg.assign(
     # Get the coordinates for plot: interval edges
-    x_left=lambda df: df.index.categories.left,
-    x_right=lambda df: df.index.categories.right,
+    x_left=lambda df: df.index.left,
+    x_right=lambda df: df.index.right,
     x_point=lambda df: (df['x_right'] + df['x_left'])/2.,
 )
 ```
@@ -1270,43 +1364,45 @@ def x_label_map(df_agg, bucket_map, bucket_col='bucket'):
 #     )
 #     return(res)
 
-def y_quad_cumulative(df_agg, stat_wgt, bucket_col='bucket'):
-    res = df_agg.assign(
-        quad_upr=lambda df: df.groupby([bucket_col])[stat_wgt].transform('cumsum'),
-        quad_lwr=lambda df: df.groupby([bucket_col])['quad_upr'].shift(fill_value=0),
-    )
-    return(res)
+def groupby_first_not_last(df):
+    return df.groupby(df.index.names[:1] + df.index.names[1:-1])
 
-def y_quad_area(df_agg, stat_wgt, bucket_col='bucket'):
-    res = df_agg.assign(
-        x_width=lambda df: df['x_right'] - df['x_left'],
-        quad_upr=lambda df: df.groupby([bucket_col])[stat_wgt].transform('cumsum') / df['x_width'],
-        quad_lwr=lambda df: df.groupby([bucket_col])['quad_upr'].shift(fill_value=0),
-    )
-    return(res)
+def y_quad_cumulative(df_agg, stat_wgt):
+    res = df_agg.pipe(assign_hierarchical, **{
+        'quad_upr': lambda df: groupby_first_not_last(df)[stat_wgt].transform('cumsum'),
+        'quad_lwr': lambda df: groupby_first_not_last(df)['quad_upr'].shift(fill_value=0),
+    })
+    return res
 
-def y_quad_proportion(df_agg, stat_wgt, bucket_col='bucket'):
-    res = df_agg.assign(
-        quad_upr=lambda df: (
-            df.groupby([bucket_col])[stat_wgt].transform('cumsum') / 
-            df.groupby([bucket_col])[stat_wgt].transform('sum')
+def y_quad_area(df_agg, stat_wgt):
+    res = df_agg.pipe(assign_hierarchical, **{
+        'x_width': lambda df: df['x_right'] - df['x_left'],
+        'quad_upr': lambda df: groupby_first_not_last(df)[stat_wgt].transform('cumsum') / df['x_width'],
+        'quad_lwr': lambda df: groupby_first_not_last(df)['quad_upr'].shift(fill_value=0),
+    })
+    return res
+
+def y_quad_proportion(df_agg, stat_wgt):
+    res = df_agg.pipe(assign_hierarchical, **{
+        'quad_upr': lambda df: (
+            groupby_first_not_last(df)[stat_wgt].transform('cumsum') / 
+            groupby_first_not_last(df)[stat_wgt].transform('sum')
         ),
-        quad_lwr=lambda df: df.groupby([bucket_col])['quad_upr'].shift(fill_value=0),
-    )
-    return(res)
+        'quad_lwr': lambda df: groupby_first_not_last(df)['quad_upr'].shift(fill_value=0),
+    })
+    return res
 ```
 
 ```python
 # Examples
 stat_wgt='Exposure'
-tmp7_agg_split.pipe(
-    x_edges_interval
-#     x_edges_min_max
-#     x_edges_min_max
+tmp71_combined_1.pipe(
+#     x_edges_interval
+    x_edges_min_max
 ).pipe(
 #     y_quad_cumulative, stat_wgt
-    y_quad_area, stat_wgt
-#     y_quad_proportion, stat_wgt
+#     y_quad_area, stat_wgt
+    y_quad_proportion, stat_wgt
 )
 ```
 
@@ -1315,7 +1411,7 @@ pipe_funcs_df = pd.DataFrame(
     columns=['task', 'func', 'alias'],
     data = [
         ('x_edges', x_edges_interval, ['interval']),
-        ('x_edges', x_edges_min_max, ['min_max']),
+        ('x_edges', x_edges_min_max, ['min_max', 'range']),
         ('x_edges', x_edges_unit, ['unit']),
         ('x_point', x_point_mid, ['mid']),
         ('x_point', x_point_wgt_av, ['wgt_av']),
@@ -1458,20 +1554,22 @@ def add_coords(
 ```
 
 ```python
-pipe_funcs_df
-```
-
-```python
 def create_bplot(
     df_for_plt, stat_wgt, stat_vars,
+    stack=None,
     cols=bokeh.palettes.Dark2[8],
 ):
     """Create bucket plot object from aggregated data"""
-    # Add a second index level, if it does not have one already
-    if len(df_for_plt.index.names) == 1:
-        df_for_plt = df_for_plt.assign(
-            split='__all__'
-        ).set_index([df_for_plt.index, 'split'])
+    # Set defaults
+    if not isinstance(stack, list):
+        stack = [stack, stack]
+    if len(stack) != 2:
+        raise ValueError("`stack` not correct")
+    for idx, stk in enumerate(stack):
+        if stk == 0:
+            stack[idx] = None
+        if stk == 1:
+            stack[idx] = 1
     
     # Set up the figure
     bkp = bokeh.plotting.figure(
@@ -1481,35 +1579,43 @@ def create_bplot(
     )
 
     # Plot the histogram squares...
+    df_for_quads = select_hierarchical_levels(df_for_plt, stack[0])
     bkp.quad(
-        top=df_for_plt['quad_upr'], bottom=df_for_plt['quad_lwr'],
-        left=df_for_plt['x_left'], right=df_for_plt['x_right'],
+        top=df_for_quads['quad_upr'], bottom=df_for_quads['quad_lwr'],
+        left=df_for_quads['x_left'], right=df_for_quads['x_right'],
         fill_color="khaki", line_color="white", legend_label="Weight"
     )
     # ...at the bottom of the graph
     bkp.y_range = bokeh.models.ranges.Range1d(
-        **expand_lims(df_for_plt[['quad_upr', 'quad_lwr']], 0, 1.2)
+        **expand_lims(df_for_quads[['quad_upr', 'quad_lwr']], 0, 1.2)
     )
 
     bkp.legend.location = "top_left"
     bkp.legend.click_policy="hide"
 
     # Plot the weight average statistic points joined by straight lines
+    df_for_stat_vars = select_hierarchical_levels(df_for_plt, stack[1])
+    # Add a second index level, if it does not have one already
+    if len(df_for_stat_vars.index.names) == 1:
+        df_for_stat_vars = df_for_stat_vars.assign(
+            __dummy_level__='__all__'
+        ).set_index([df_for_stat_vars.index, '__dummy_level__'])
+    
     # Set up the secondary axis
     bkp.extra_y_ranges['y_range_2'] = bokeh.models.ranges.Range1d(
-        **expand_lims(df_for_plt[[stat_var + '_wgt_av' for stat_var in stat_vars]])
+        **expand_lims(df_for_stat_vars[[stat_var + '_wgt_av' for stat_var in stat_vars]])
     )
     bkp.add_layout(bokeh.models.axes.LinearAxis(
         y_range_name='y_range_2',
         axis_label="Weighted average statistic"
     ), 'right')
-
+    
     for var_num, stat_var in enumerate(stat_vars):
-        for split_level in df_for_plt.index.levels[1]:
+        for split_level in df_for_stat_vars.index.get_level_values(1).drop_duplicates():
             # The following parameters need to be passed to both circle() and line()
             stat_line_args = {
-                'x': df_for_plt.xs(split_level, level=1)['x_point'],
-                'y': df_for_plt.xs(split_level, level=1)[stat_var + '_wgt_av'],
+                'x': df_for_stat_vars.xs(split_level, level=1)['x_point'],
+                'y': df_for_stat_vars.xs(split_level, level=1)[stat_var + '_wgt_av'],
                 'y_range_name': 'y_range_2',
                 'color': cols[var_num],
                 'legend_label': stat_var,
@@ -1521,23 +1627,28 @@ def create_bplot(
 ```
 
 ```python
-# Example lift chart
+# Example lift chart: Split into data processing and then plotting
+# Create data
 bucket_var, bucket_wgt = 'Freq_pred_simple', 'Exposure'
 x_var, stat_wgt, stat_vars = 'cum_' + bucket_wgt, bucket_wgt, ['Frequency', 'Freq_pred_simple']
-tmp8_for_plt = df.pipe(
+tmp8_agg = df.pipe(
     weighted_quantiles, bucket_var, 10, bucket_wgt
 ).pipe(
-    agg_wgt_av, stat_wgt, x_var, stat_vars, 
-    split_col='split'
-).pipe(
-    add_coords, stat_wgt=stat_wgt, y_quad='prop', x_edges='min_max'
+    agg_combined, agg_wgt_av, stat_wgt, x_var, stat_vars,
+    split_cols=['split', 'Area']
 )
-bkp = create_bplot(tmp8_for_plt, stat_wgt, stat_vars)
-bokeh.plotting.show(bkp)
+tmp8_agg.head()
 ```
 
 ```python
-
+# Plot
+bkp = tmp8_agg.pipe(
+    add_coords, stat_wgt=stat_wgt, #y_quad='prop', x_edges='unit'
+).pipe(
+    create_bplot, stat_wgt, stat_vars,
+    stack=["Area", "split"]
+)
+bokeh.plotting.show(bkp)
 ```
 
 <div style="text-align: right"><a href="#Contents">Back to Contents</a></div>
@@ -1559,8 +1670,8 @@ df_for_plt = df.pipe(
 #     custom_width, bucket_var, 3, 17.5
     custom_width, bucket_var, 3, 17.5, None, 68.5
 ).pipe(
-    agg_wgt_av, stat_wgt, x_var, stat_vars,
-    # split_col='split'
+    agg_combined, agg_wgt_av, stat_wgt, x_var, stat_vars,
+    # split_cols='split'
 ).pipe(
     add_coords, stat_wgt=stat_wgt, bucket_col='bucket',
     y_quad='area', 
@@ -1581,8 +1692,8 @@ df_for_plt = df.pipe(
     custom_width, bucket_var, 100, 0.5, None, 1000
 #     weighted_quantiles, bucket_var, 10, bucket_wgt
 ).pipe(
-    agg_wgt_av, stat_wgt, x_var, stat_vars,
-    split_col='split'
+    agg_combined, agg_wgt_av, stat_wgt, x_var, stat_vars,
+    split_cols='split'
 ).pipe(
     add_coords, stat_wgt=stat_wgt, bucket_col='bucket',
 #     x_edges='min_max', x_point='wgt_av', x_var=x_var,
@@ -1602,8 +1713,8 @@ bucket_var, bucket_wgt = x_var, stat_wgt
 df_for_plt = df.pipe(
     all_levels, bucket_var
 ).pipe(
-    agg_wgt_av, stat_wgt, x_var, stat_vars,
-    split_col='split',
+    agg_combined, agg_wgt_av, stat_wgt, x_var, stat_vars,
+    split_cols='split',
 ).pipe(
     add_coords, stat_wgt=stat_wgt,
 )
@@ -1623,9 +1734,9 @@ df_for_plt = df.pipe(
 ).pipe(
     weighted_quantiles, 'Frequency_wgt_av', 5, stat_wgt
 ).pipe(
-    agg_wgt_av, stat_wgt, 'Frequency_wgt_av',
+    agg_combined, agg_wgt_av, stat_wgt, 'Frequency_wgt_av',
     stat_vars=['Frequency_wgt_av', 'Freq_pred_simple_wgt_av'],
-    # split_col='split' # NOT CURRENTLY WORKING PROPERLY
+    # split_cols='split' # NOT CURRENTLY WORKING PROPERLY
 ).pipe(
     add_coords, stat_wgt=stat_wgt, bucket_col='bucket',
 )
@@ -1653,88 +1764,6 @@ miss_ind_grpd = pd.Series([0, 1, np.nan]).to_frame('val').assign(
 )
 display(miss_ind_grpd)
 miss_ind_grpd.unstack(fill_value=0)
-```
-
-```python
-# Unfinished functions to merge and split df_agg_all and df_agg_split
-def get_agg_all(df_agg, split_col_val=None):
-    if split_col_val is None:
-        split_col_val = ('split', '__all__')
-    df_agg_all = df_agg.xs(
-        split_col_val[1], level=split_col_val[0]
-    ).dropna(axis=1, how='all')
-    return(df_agg_all)
-
-def get_agg_splits(df_agg, split_col_val=None):
-    if split_col_val is None:
-        split_col_val = ('split', '__all__')
-    df_agg_splits = df_agg.loc[
-        df_agg.index.get_level_values(split_col_val[0]) != split_col_val[1],:
-    ].dropna(axis=1, how='all')
-    return(df_agg_splits)
-
-# NOT COMPLETE
-
-def agg_split_merge(
-    df_w_buckets, stat_wgt=None,
-    x_var=None, stat_vars=None,
-    bucket_var=None, split_var=None,
-):
-    if split_var is None:
-        df_agg_all = df_w_buckets.pipe(
-            agg_wgt_av, stat_wgt, x_var, stat_vars, bucket_var, split_var
-        )
-    df_agg_split = df_w_buckets.pipe(
-        agg_wgt_av, stat_wgt, None, stat_vars, bucket_var, split_var
-    )
-```
-
-## Not longer used
-
-```python
-# Previous attempt involved passing arguments between functions
-BARGS_DEFAULT = {
-    'stat_wgt': 'const',
-    'bucket_wgt': 'stat_wgt',
-    'n_bins': 10,
-    'order_by': 'NA',
-    'stat_vars': [],
-}
-
-def update_bargs(bargs_new, bargs_prev, func_name, bargs_default=BARGS_DEFAULT):
-    """
-    Update the Bucket arguments so that they can be tracked and passed between functions.
-    
-    bargs_new: Items to add to bargs, or overwrite previous values
-    bargs_prev: Current items in bargs
-    bargs_default: Values to take if the corresponding bargs_new value is None
-    func_name: To include in the error message.
-    
-    Specifically, return a dictionary of bargs with the following items:
-    Items from bargs_new with non-None values take precedence.
-    For items with None value in bargs_new:
-        If the key exists in bargs_prev, take that item.
-        Else if the key exists in bargs_default, that that item.
-        Else throw an error, i.e. every key from bargs_new must be in the output.
-    For keys in bargs_prev but not in bargs_new, take that item.
-    """
-    # Convert input data types
-    if bargs_prev is None:
-        bargs_prev = dict()
-    # Allocate a non-None value for every key in bargs_new or bargs_prev
-    res = dict()
-    for key in {**bargs_new, **bargs_prev}.keys():
-        if key in bargs_new.keys() and bargs_new[key] is not None:
-            res[key] = bargs_new[key]
-        elif key in bargs_prev.keys():
-            res[key] = bargs_prev[key]
-        elif key in bargs_default.keys():
-            res[key] = bargs_default[key]
-        else: 
-            raise ValueError(
-                f"{func_name}: '{key}' is required but has not been supplied"
-            )
-    return(res)
 ```
 
 <div style="text-align: right"><a href="#Contents">Back to Contents</a></div>
